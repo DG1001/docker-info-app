@@ -34,18 +34,31 @@ def run_docker_info(task_id, use_ollama):
             tasks[task_id]['status'] = 'error'
             tasks[task_id]['message'] = 'No running containers found.'
             return
-        
+
         # Collect information for each container
-        with open(json_file, 'w') as f:
-            f.write("[")
-            for i, container_id in enumerate(containers):
-                if container_id:  # Skip empty lines
-                    if i > 0:
-                        f.write(",")
-                    container_info = subprocess.check_output(["docker", "inspect", container_id]).decode()
-                    f.write(container_info)
-            f.write("]")
-        
+        all_container_info = []
+        for container_id in containers:
+            if container_id:  # Skip empty lines
+                try:
+                    # docker inspect outputs a JSON array with one element
+                    inspect_output = subprocess.check_output(["docker", "inspect", container_id]).decode()
+                    container_info_list = json.loads(inspect_output)
+                    if container_info_list: # Check if the list is not empty
+                        all_container_info.append(container_info_list[0]) # Append the actual object
+                except (subprocess.SubprocessError, json.JSONDecodeError) as inspect_error:
+                    tasks[task_id]['status'] = 'error'
+                    tasks[task_id]['message'] = f"Error inspecting container {container_id}: {str(inspect_error)}"
+                    return # Stop processing if inspection fails for one container
+
+        # Write the collected info as a proper JSON array
+        try:
+            with open(json_file, 'w') as f:
+                json.dump(all_container_info, f, indent=2) # Use indent for readability (optional)
+        except IOError as write_error:
+             tasks[task_id]['status'] = 'error'
+             tasks[task_id]['message'] = f"Error writing container info to file: {str(write_error)}"
+             return
+
         # Update task status
         tasks[task_id]['status'] = 'generating'
         tasks[task_id]['message'] = 'Generating markdown report...'
