@@ -16,6 +16,9 @@ os.environ["PATH"] = "/run/current-system/sw/bin:" + os.environ.get("PATH", "")
 # Storage for background tasks
 tasks = {}
 
+# Configuration
+OLLAMA_API_URL = "http://localhost:11434"
+
 def run_docker_info(task_id, use_ollama):
     """Run the Docker info collection and report generation in the background"""
     try:
@@ -68,8 +71,8 @@ def run_docker_info(task_id, use_ollama):
             # Check if Ollama API is accessible
             try:
                 model = "gemma3:latest"
-                model_check = requests.get("http://localhost:11434/api/tags", timeout=5).json()
-                
+                model_check = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5).json()
+
                 # Check if the model exists
                 model_found = False
                 available_models = []
@@ -106,11 +109,11 @@ JSON data:
                     
                     # Make request to Ollama API
                     response = requests.post(
-                        "http://localhost:11434/api/generate",
+                        f"{OLLAMA_API_URL}/api/generate",
                         json={"model": model, "prompt": prompt, "stream": False},
                         timeout=180  # Longer timeout for large model responses
                     )
-                    
+
                     # Write response to markdown file
                     if response.status_code == 200:
                         with open(markdown_file, 'w') as f:
@@ -208,14 +211,15 @@ def index():
     
     # Check if Ollama API is available
     try:
-        requests.get("http://localhost:11434/api/tags", timeout=2)
+        requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=2)
         ollama_available = True
     except requests.RequestException:
         ollama_available = False
     
-    return render_template('index.html', 
+    return render_template('index.html',
                           docker_available=docker_available,
-                          ollama_available=ollama_available)
+                          ollama_available=ollama_available,
+                          ollama_url=OLLAMA_API_URL) # Pass URL to template
 
 
 @app.route('/generate', methods=['POST'])

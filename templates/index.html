@@ -31,11 +31,11 @@
                         <label class="form-check-label" for="use_ollama">
                             Use Ollama LLM for enhanced report generation
                         </label>
-                        <div class="form-text">Ollama API detected on port 11434. Using Ollama will create a more detailed and well-formatted report.</div>
+                        <div class="form-text">Ollama API detected at {{ ollama_url }}. Using Ollama will create a more detailed and well-formatted report.</div>
                     </div>
                     {% else %}
                     <div class="alert alert-warning">
-                        Ollama API not detected on port 11434. Basic report generation will be used.
+                        Ollama API not detected at {{ ollama_url }}. Basic report generation will be used.
                     </div>
                     {% endif %}
                     
