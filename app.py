@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify
+from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, flash
 import subprocess
 import json
 import os
@@ -20,6 +20,9 @@ tasks = {}
 # Configuration
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # Get API key from environment
 OPENAI_MODEL = "gpt-4.1-nano" # Specify the desired OpenAI model
+app.secret_key = os.urandom(24) # Needed for flashing messages
+
+# --- Helper Functions ---
 
 def run_docker_info(task_id, use_openai):
     """Run the Docker info collection and report generation in the background"""
@@ -287,6 +290,42 @@ JSON data:
         tasks[task_id]['status'] = 'error'
         tasks[task_id]['message'] = f"Error: {str(e)}"
 
+def get_containers(show_all=False):
+    """Gets a list of Docker containers."""
+    cmd = ["docker", "ps", "--format", "{{json .}}"]
+    if show_all:
+        cmd.append("-a")
+    
+    containers = []
+    try:
+        output = subprocess.check_output(cmd).decode().strip()
+        if not output:
+            return [] # No containers found
+        
+        # Each line is a JSON object
+        for line in output.splitlines():
+            try:
+                container_data = json.loads(line)
+                # Simplify data for frontend
+                containers.append({
+                    'id': container_data.get('ID'),
+                    'name': container_data.get('Names'),
+                    'image': container_data.get('Image'),
+                    'status': container_data.get('Status'),
+                    'state': container_data.get('State'), # e.g., 'running', 'exited'
+                })
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse JSON line: {line}") # Log parsing errors
+                continue # Skip malformed lines
+                
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"Error getting containers: {e}") # Log the error
+        # Optionally, raise an exception or return an error indicator
+        return None # Indicate an error occurred
+        
+    return containers
+
+# --- Routes ---
 
 @app.route('/')
 def index():
@@ -297,13 +336,23 @@ def index():
         docker_available = True
     except (subprocess.SubprocessError, FileNotFoundError):
         docker_available = False
+        running_containers = None # Indicate Docker issue
+        flash("Docker command not found. Please ensure Docker is installed and in the system PATH.", "danger")
+    
+    if docker_available:
+        running_containers = get_containers(show_all=False)
+        if running_containers is None:
+             # Error occurred in get_containers
+             flash("Failed to fetch container status from Docker.", "danger")
+
 
     # Check if OpenAI API key is configured
     openai_available = bool(OPENAI_API_KEY)
 
     return render_template('index.html',
-                          docker_available=docker_available,
-                          openai_available=openai_available) # Pass OpenAI availability
+                           docker_available=docker_available,
+                           openai_available=openai_available,
+                           containers=running_containers) # Pass initial container list
 
 
 @app.route('/generate', methods=['POST'])
@@ -368,6 +417,48 @@ def view_report(task_id):
         return render_template('view.html', content=content, task_id=task_id)
     except Exception as e:
         return f"Error reading report: {str(e)}", 500
+
+# --- API Routes ---
+
+@app.route('/api/containers')
+def api_get_containers():
+    """API endpoint to get container list (running or all)"""
+    show_all = request.args.get('all', 'false').lower() == 'true'
+    
+    try:
+        subprocess.check_output(["docker", "--version"])
+    except (subprocess.SubprocessError, FileNotFoundError):
+         return jsonify({"error": "Docker command not found."}), 500
+         
+    containers = get_containers(show_all=show_all)
+    
+    if containers is None:
+        return jsonify({"error": "Failed to fetch container status from Docker."}), 500
+        
+    return jsonify(containers)
+
+@app.route('/api/container/<action>/<container_id>', methods=['POST'])
+def api_container_action(action, container_id):
+    """API endpoint to start or stop a container"""
+    if action not in ['start', 'stop']:
+        return jsonify({"error": "Invalid action"}), 400
+
+    # Basic validation for container ID (prevent command injection)
+    if not container_id or not container_id.isalnum():
+         return jsonify({"error": "Invalid container ID"}), 400
+
+    cmd = ["docker", action, container_id]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return jsonify({"success": True, "message": f"Container {container_id} {action}ed successfully."})
+    except FileNotFoundError:
+        return jsonify({"error": "Docker command not found."}), 500
+    except subprocess.CalledProcessError as e:
+        error_message = e.stderr.strip() if e.stderr else f"Docker command failed for {action}."
+        return jsonify({"error": f"Failed to {action} container {container_id}: {error_message}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 
 # Templates directory will be automatically used by Flask

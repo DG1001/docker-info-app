@@ -3,23 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Docker Container Info</title>
+    <title>Docker Container Info & Control</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css"> <!-- Added for icons -->
     <style>
-        body { padding-top: 20px; }
-        .container { max-width: 800px; }
+        body { padding-top: 20px; padding-bottom: 50px; } /* Added bottom padding */
+        .container { max-width: 1000px; } /* Wider container */
+        .action-btn { cursor: pointer; }
+        .status-running { color: green; }
+        .status-exited { color: red; }
+        .status-other { color: orange; }
+        #container-status-section .card-body { max-height: 60vh; overflow-y: auto; } /* Scrollable table */
+        .loading-spinner { display: none; } /* Hide spinner initially */
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="mb-4">Docker Container Information Tool</h1>
-        
+        <h1 class="mb-4">Docker Container Information & Control</h1>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
         {% if not docker_available %}
         <div class="alert alert-danger">
-            <strong>Error:</strong> Docker is not available. Please ensure Docker is installed and running.
+            <strong>Error:</strong> Docker command not found or Docker is not running. Please ensure Docker is installed, running, and accessible via the system PATH.
         </div>
         {% else %}
-        <div class="card">
+        <!-- Report Generation Card -->
+        <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Generate Docker Container Report</h5>
                 <p class="card-text">This tool will collect information about all running Docker containers and generate a comprehensive markdown report.</p>
@@ -43,9 +63,220 @@
                 </form>
             </div>
         </div>
+
+        <!-- Container Status Card -->
+        <div class="card" id="container-status-section">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Container Status</h5>
+                <div>
+                    <div class="btn-group btn-group-sm me-2" role="group" aria-label="Container view">
+                        <input type="radio" class="btn-check" name="containerView" id="viewRunning" autocomplete="off" checked>
+                        <label class="btn btn-outline-primary" for="viewRunning">Running</label>
+
+                        <input type="radio" class="btn-check" name="containerView" id="viewAll" autocomplete="off">
+                        <label class="btn btn-outline-primary" for="viewAll">All</label>
+                    </div>
+                    <button id="refreshContainers" class="btn btn-sm btn-secondary" title="Refresh List">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                        <span class="spinner-border spinner-border-sm ms-1 loading-spinner" role="status" aria-hidden="true"></span>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                 <div id="container-error" class="alert alert-danger" style="display: none;"></div>
+                 <div id="container-action-status" class="alert" style="display: none;"></div>
+
+                 <table class="table table-striped table-hover table-sm">
+                     <thead>
+                         <tr>
+                             <th>ID</th>
+                             <th>Name</th>
+                             <th>Image</th>
+                             <th>Status</th>
+                             <th>Actions</th>
+                         </tr>
+                     </thead>
+                     <tbody id="container-list-body">
+                         <!-- Initial data (optional, can be loaded via JS) -->
+                         {% if containers is not none %}
+                             {% for container in containers %}
+                             <tr>
+                                 <td>{{ container.id[:12] }}</td>
+                                 <td>{{ container.name }}</td>
+                                 <td>{{ container.image }}</td>
+                                 <td>
+                                     <span class="status-{{ container.state }}">{{ container.status }}</span>
+                                 </td>
+                                 <td>
+                                     {% if container.state == 'running' %}
+                                     <button class="btn btn-sm btn-warning action-btn stop-btn" data-id="{{ container.id }}" data-action="stop" title="Stop Container">
+                                         <i class="bi bi-stop-fill"></i> Stop
+                                     </button>
+                                     {% elif container.state == 'exited' %}
+                                     <button class="btn btn-sm btn-success action-btn start-btn" data-id="{{ container.id }}" data-action="start" title="Start Container">
+                                         <i class="bi bi-play-fill"></i> Start
+                                     </button>
+                                     {% else %}
+                                     <!-- No actions for other states like 'created' -->
+                                     {% endif %}
+                                 </td>
+                             </tr>
+                             {% endfor %}
+                             {% if not containers %}
+                             <tr><td colspan="5" class="text-center">No running containers found.</td></tr>
+                             {% endif %}
+                         {% else %}
+                             <tr><td colspan="5" class="text-center text-danger">Could not load container status.</td></tr>
+                         {% endif %}
+                     </tbody>
+                 </table>
+            </div>
+        </div>
         {% endif %}
     </div>
-    
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const containerListBody = document.getElementById('container-list-body');
+        const viewRunningRadio = document.getElementById('viewRunning');
+        const viewAllRadio = document.getElementById('viewAll');
+        const refreshButton = document.getElementById('refreshContainers');
+        const loadingSpinner = refreshButton.querySelector('.loading-spinner');
+        const containerErrorDiv = document.getElementById('container-error');
+        const containerActionStatusDiv = document.getElementById('container-action-status');
+
+        function showLoading(isLoading) {
+            if (isLoading) {
+                loadingSpinner.style.display = 'inline-block';
+                refreshButton.disabled = true;
+            } else {
+                loadingSpinner.style.display = 'none';
+                refreshButton.disabled = false;
+            }
+        }
+
+        function displayContainerError(message) {
+            containerErrorDiv.textContent = message;
+            containerErrorDiv.style.display = 'block';
+            containerListBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${message}</td></tr>`;
+        }
+
+        function displayActionStatus(message, isSuccess) {
+            containerActionStatusDiv.textContent = message;
+            containerActionStatusDiv.className = `alert alert-${isSuccess ? 'success' : 'danger'}`;
+            containerActionStatusDiv.style.display = 'block';
+            // Auto-hide after a few seconds
+            setTimeout(() => {
+                containerActionStatusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        async function fetchAndUpdateContainers(showAll = false) {
+            showLoading(true);
+            containerErrorDiv.style.display = 'none'; // Hide previous errors
+            const url = `/api/containers?all=${showAll}`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                const containers = await response.json();
+
+                containerListBody.innerHTML = ''; // Clear existing rows
+
+                if (containers.length === 0) {
+                    const message = showAll ? 'No containers found.' : 'No running containers found.';
+                    containerListBody.innerHTML = `<tr><td colspan="5" class="text-center">${message}</td></tr>`;
+                } else {
+                    containers.forEach(container => {
+                        const row = document.createElement('tr');
+                        let actionButtonHtml = '';
+                        let statusClass = 'status-other';
+
+                        if (container.state === 'running') {
+                            statusClass = 'status-running';
+                            actionButtonHtml = `
+                                <button class="btn btn-sm btn-warning action-btn stop-btn" data-id="${container.id}" data-action="stop" title="Stop Container">
+                                    <i class="bi bi-stop-fill"></i> Stop
+                                </button>`;
+                        } else if (container.state === 'exited') {
+                            statusClass = 'status-exited';
+                            actionButtonHtml = `
+                                <button class="btn btn-sm btn-success action-btn start-btn" data-id="${container.id}" data-action="start" title="Start Container">
+                                    <i class="bi bi-play-fill"></i> Start
+                                </button>`;
+                        }
+                        // Add more states if needed
+
+                        row.innerHTML = `
+                            <td>${container.id.substring(0, 12)}</td>
+                            <td>${container.name}</td>
+                            <td>${container.image}</td>
+                            <td><span class="${statusClass}">${container.status}</span></td>
+                            <td>${actionButtonHtml}</td>
+                        `;
+                        containerListBody.appendChild(row);
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching containers:', error);
+                displayContainerError(`Error fetching containers: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function handleContainerAction(event) {
+            const button = event.target.closest('.action-btn');
+            if (!button) return;
+
+            const containerId = button.dataset.id;
+            const action = button.dataset.action;
+
+            if (!containerId || !action) return;
+
+            button.disabled = true; // Disable button during action
+            const originalHtml = button.innerHTML;
+            button.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ${action}...`;
+
+            const url = `/api/container/${action}/${containerId}`;
+
+            try {
+                const response = await fetch(url, { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok || result.error) {
+                    throw new Error(result.error || `Failed to ${action} container.`);
+                }
+
+                displayActionStatus(result.message || `Container ${action}ed successfully.`, true);
+                // Refresh the list after successful action
+                fetchAndUpdateContainers(viewAllRadio.checked);
+
+            } catch (error) {
+                console.error(`Error ${action}ing container:`, error);
+                displayActionStatus(`Error ${action}ing container: ${error.message}`, false);
+                button.disabled = false; // Re-enable button on error
+                button.innerHTML = originalHtml; // Restore original button text/icon
+            }
+            // Note: Button state is fully reset by the list refresh on success
+        }
+
+        // Event Listeners
+        viewRunningRadio.addEventListener('change', () => fetchAndUpdateContainers(false));
+        viewAllRadio.addEventListener('change', () => fetchAndUpdateContainers(true));
+        refreshButton.addEventListener('click', () => fetchAndUpdateContainers(viewAllRadio.checked));
+        containerListBody.addEventListener('click', handleContainerAction);
+
+        // Initial load (if docker is available and initial load didn't fail)
+        {% if docker_available and containers is not none %}
+            // Data already rendered server-side, just attach listeners
+            // Or uncomment below to always load fresh via JS on page load:
+            // document.addEventListener('DOMContentLoaded', () => fetchAndUpdateContainers(false));
+        {% endif %}
+
+    </script>
 </body>
 </html>
