@@ -290,7 +290,8 @@ JSON data:
         tasks[task_id]['status'] = 'error'
         tasks[task_id]['message'] = f"Error: {str(e)}"
 
-def get_containers(show_all=False):
+# Pass request_hostname=None by default for non-request contexts (like background task)
+def get_containers(show_all=False, request_hostname=None): 
     """Gets a list of Docker containers with parsed port info."""
     cmd = ["docker", "ps", "--format", "{{json .}}"]
     if show_all:
@@ -298,7 +299,8 @@ def get_containers(show_all=False):
 
     containers = []
 
-    def parse_ports(ports_str):
+    # Note: request_hostname should only be passed when called from a request context
+    def parse_ports(ports_str, request_hostname=None): 
         """Parses the port string from docker ps into structured data."""
         parsed = []
         if not ports_str:
@@ -326,19 +328,17 @@ def get_containers(show_all=False):
                     port_info['host_ip'] = host_part[:last_colon_index]
                     port_info['host_port'] = host_part[last_colon_index+1:]
 
-                    # Handle cases like ':::port' -> '::' as IP
-                    if port_info['host_ip'] == '::':
-                        host_link_ip = 'localhost'
-                    elif port_info['host_ip'] == '0.0.0.0':
-                         host_link_ip = 'localhost'
-                    else:
-                         host_link_ip = port_info['host_ip']
-
-                    # Create link only if host port is valid
-                    if port_info['host_port'].isdigit():
-                        port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
-                    else:
-                         print(f"Warning: Non-numeric host port detected: {port_info['host_port']} in {host_part}")
+                    # Only create links for ports bound to 0.0.0.0 or :: (likely reachable)
+                    if port_info['host_ip'] in ['0.0.0.0', '::']:
+                        # Use request hostname if available, otherwise default to localhost
+                        host_link_ip = request_hostname if request_hostname else 'localhost'
+                        
+                        # Create link only if host port is valid
+                        if port_info['host_port'].isdigit():
+                            port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
+                        else:
+                            print(f"Warning: Non-numeric host port detected for reachable binding: {port_info['host_port']} in {host_part}")
+                    # else: Port is bound to a specific IP (e.g., 127.0.0.1), so don't create a link
 
                 else: # No colon found, might be just IP or hostname? Unlikely for port mapping.
                     print(f"Warning: Could not find colon to separate host IP and port in: {host_part}")
@@ -372,7 +372,8 @@ def get_containers(show_all=False):
                     'status': container_data.get('Status'),
                     'state': container_data.get('State'), # e.g., 'running', 'exited',
                     'ports_raw': container_data.get('Ports', ''), # Get the raw port string
-                    'ports_parsed': parse_ports(container_data.get('Ports', '')) # Add parsed ports
+                    # Pass hostname to parse_ports
+                    'ports_parsed': parse_ports(container_data.get('Ports', ''), request_hostname=request_hostname) 
                 })
             except json.JSONDecodeError:
                 print(f"Warning: Could not parse JSON line: {line}") # Log parsing errors
@@ -398,9 +399,11 @@ def index():
         docker_available = False
         running_containers = None # Indicate Docker issue
         flash("Docker command not found. Please ensure Docker is installed and in the system PATH.", "danger")
-    
+
     if docker_available:
-        running_containers = get_containers(show_all=False)
+        # Get hostname from request (strip port if present)
+        req_hostname = request.host.split(':')[0] if request and request.host else None
+        running_containers = get_containers(show_all=False, request_hostname=req_hostname)
         if running_containers is None:
              # Error occurred in get_containers
              flash("Failed to fetch container status from Docker.", "danger")
@@ -489,9 +492,11 @@ def api_get_containers():
         subprocess.check_output(["docker", "--version"])
     except (subprocess.SubprocessError, FileNotFoundError):
          return jsonify({"error": "Docker command not found."}), 500
-         
-    containers = get_containers(show_all=show_all)
-    
+
+    # Get hostname from request (strip port if present)
+    req_hostname = request.host.split(':')[0] if request and request.host else None
+    containers = get_containers(show_all=show_all, request_hostname=req_hostname)
+
     if containers is None:
         return jsonify({"error": "Failed to fetch container status from Docker."}), 500
         
