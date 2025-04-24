@@ -85,7 +85,11 @@ def run_docker_info(task_id, use_openai):
                     user_prompt = f"""Create a comprehensive markdown report about Docker containers from the following JSON data.
 Include sections for:
 1. Executive Summary (count of containers, unique images used, common networks, etc.)
-2. Detailed Container Information (organized per container: Name, ID, Image, Status, Ports, Networks, Mounts)
+2. Detailed Container Information:
+   Present this information in a markdown table with the following columns:
+   | Name | Short ID | Image | Status | Ports | Networks | Mounts |
+   |------|----------|-------|--------|-------|----------|--------|
+   Use the first 12 characters for the 'Short ID'. For the 'Ports', 'Networks', and 'Mounts' columns, summarize the information concisely. Use backticks (`) around complex entries if needed to prevent breaking the table structure (e.g., `port1 -> host:port1, port2 -> host:port2`).
 3. Network Configuration Summary (List networks and connected containers)
 4. Volume Mounts Summary (List volumes/bind mounts and containers using them)
 5. Resource Usage and Limits (If available in data)
