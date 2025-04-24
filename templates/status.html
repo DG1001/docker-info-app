@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Status - Docker Container Info</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding-top: 20px; }
+        .container { max-width: 800px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Task Status</h1>
+        
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Task: {{ task_id }}</h5>
+                <p><strong>Started:</strong> {{ task.timestamp }}</p>
+                <p><strong>Status:</strong> <span id="status-text">{{ task.status }}</span></p>
+                <p><strong>Message:</strong> <span id="message-text">{{ task.message }}</span></p>
+                
+                <div class="progress mb-3">
+                    <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                </div>
+                
+                <div id="completed-actions" style="display: none;">
+                    <a href="/download/{{ task_id }}" class="btn btn-success">Download Report</a>
+                    <a href="/view/{{ task_id }}" class="btn btn-primary">View Report</a>
+                </div>
+                
+                <div id="error-actions" style="display: none;">
+                    <a href="/" class="btn btn-primary">Back to Home</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const statusText = document.getElementById('status-text');
+        const messageText = document.getElementById('message-text');
+        const progressBar = document.getElementById('progress-bar');
+        const completedActions = document.getElementById('completed-actions');
+        const errorActions = document.getElementById('error-actions');
+        
+        function updateProgress(status) {
+            switch(status) {
+                case 'starting':
+                    progressBar.style.width = '10%';
+                    break;
+                case 'collecting':
+                    progressBar.style.width = '30%';
+                    break;
+                case 'generating':
+                    progressBar.style.width = '70%';
+                    break;
+                case 'completed':
+                    progressBar.style.width = '100%';
+                    progressBar.classList.remove('progress-bar-animated');
+                    progressBar.classList.remove('progress-bar-striped');
+                    progressBar.classList.add('bg-success');
+                    completedActions.style.display = 'block';
+                    break;
+                case 'error':
+                    progressBar.style.width = '100%';
+                    progressBar.classList.remove('progress-bar-animated');
+                    progressBar.classList.remove('progress-bar-striped');
+                    progressBar.classList.add('bg-danger');
+                    errorActions.style.display = 'block';
+                    break;
+            }
+        }
+        
+        function checkStatus() {
+            fetch('/api/status/{{ task_id }}')
+                .then(response => response.json())
+                .then(data => {
+                    statusText.textContent = data.status;
+                    messageText.textContent = data.message;
+                    updateProgress(data.status);
+                    
+                    if (data.status !== 'completed' && data.status !== 'error') {
+                        setTimeout(checkStatus, 1000);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking status:', error);
+                    setTimeout(checkStatus, 5000);
+                });
+        }
+        
+        // Initial update
+        updateProgress('{{ task.status }}');
+        
+        // Start status checks
+        if ('{{ task.status }}' !== 'completed' && '{{ task.status }}' !== 'error') {
+            setTimeout(checkStatus, 1000);
+        } else if ('{{ task.status }}' === 'completed') {
+            completedActions.style.display = 'block';
+        } else if ('{{ task.status }}' === 'error') {
+            errorActions.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
