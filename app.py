@@ -68,7 +68,7 @@ def run_docker_info(task_id, use_ollama):
             # Check if Ollama API is accessible
             try:
                 model = "gemma3:latest"
-                model_check = requests.get("http://localhost:11434/api/tags", timeout=5).json()
+                model_check = requests.get("http://ci.infra:11434/api/tags", timeout=5).json()
                 
                 # Check if the model exists
                 model_found = False
@@ -493,4 +493,4 @@ if __name__ == '__main__':
 </html>""")
     
     print("Starting Flask app on http://127.0.0.1:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5010, debug=True)
