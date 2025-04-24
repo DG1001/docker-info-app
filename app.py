@@ -320,17 +320,31 @@ def get_containers(show_all=False):
                     port_info['container_port'] = container_part # Protocol might be missing? Default?
                     port_info['protocol'] = 'tcp' # Assume tcp if missing
 
-                # Extract host IP/port
-                ip_port_match = host_part.split(':')
-                if len(ip_port_match) == 2: # Format like 0.0.0.0:8080 or :::8080
-                     port_info['host_ip'] = ip_port_match[0]
-                     port_info['host_port'] = ip_port_match[1]
-                     # Create link
-                     host_link_ip = 'localhost' if port_info['host_ip'] in ['0.0.0.0', '::'] else port_info['host_ip']
-                     port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
-                else: # Should not happen with standard docker ps output?
-                    print(f"Warning: Unexpected host port format: {host_part}")
-                    port_info['host_port'] = host_part # Fallback
+                # Extract host IP/port by splitting at the last colon
+                last_colon_index = host_part.rfind(':')
+                if last_colon_index != -1:
+                    port_info['host_ip'] = host_part[:last_colon_index]
+                    port_info['host_port'] = host_part[last_colon_index+1:]
+
+                    # Handle cases like ':::port' -> '::' as IP
+                    if port_info['host_ip'] == '::':
+                        host_link_ip = 'localhost'
+                    elif port_info['host_ip'] == '0.0.0.0':
+                         host_link_ip = 'localhost'
+                    else:
+                         host_link_ip = port_info['host_ip']
+
+                    # Create link only if host port is valid
+                    if port_info['host_port'].isdigit():
+                        port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
+                    else:
+                         print(f"Warning: Non-numeric host port detected: {port_info['host_port']} in {host_part}")
+
+                else: # No colon found, might be just IP or hostname? Unlikely for port mapping.
+                    print(f"Warning: Could not find colon to separate host IP and port in: {host_part}")
+                    # Assign the whole part as IP, port remains None
+                    port_info['host_ip'] = host_part
+
 
             else: # Only container port exposed (e.g., "6379/tcp")
                  if '/' in part:
