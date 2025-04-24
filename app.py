@@ -291,12 +291,56 @@ JSON data:
         tasks[task_id]['message'] = f"Error: {str(e)}"
 
 def get_containers(show_all=False):
-    """Gets a list of Docker containers."""
+    """Gets a list of Docker containers with parsed port info."""
     cmd = ["docker", "ps", "--format", "{{json .}}"]
     if show_all:
         cmd.append("-a")
-    
+
     containers = []
+
+    def parse_ports(ports_str):
+        """Parses the port string from docker ps into structured data."""
+        parsed = []
+        if not ports_str:
+            return parsed
+        
+        # Example: "0.0.0.0:8080->80/tcp, :::8080->80/tcp, 6379/tcp"
+        parts = ports_str.split(',')
+        for part in parts:
+            part = part.strip()
+            port_info = {'host_ip': None, 'host_port': None, 'container_port': None, 'protocol': None, 'link': None}
+            
+            if '->' in part: # Host binding exists
+                host_part, container_part = part.split('->')
+                
+                # Extract container port/protocol
+                if '/' in container_part:
+                    port_info['container_port'], port_info['protocol'] = container_part.split('/')
+                else:
+                    port_info['container_port'] = container_part # Protocol might be missing? Default?
+                    port_info['protocol'] = 'tcp' # Assume tcp if missing
+
+                # Extract host IP/port
+                ip_port_match = host_part.split(':')
+                if len(ip_port_match) == 2: # Format like 0.0.0.0:8080 or :::8080
+                     port_info['host_ip'] = ip_port_match[0]
+                     port_info['host_port'] = ip_port_match[1]
+                     # Create link
+                     host_link_ip = 'localhost' if port_info['host_ip'] in ['0.0.0.0', '::'] else port_info['host_ip']
+                     port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
+                else: # Should not happen with standard docker ps output?
+                    print(f"Warning: Unexpected host port format: {host_part}")
+                    port_info['host_port'] = host_part # Fallback
+
+            else: # Only container port exposed (e.g., "6379/tcp")
+                 if '/' in part:
+                    port_info['container_port'], port_info['protocol'] = part.split('/')
+                 else:
+                    port_info['container_port'] = part
+                    port_info['protocol'] = 'tcp' # Assume tcp
+
+            parsed.append(port_info)
+        return parsed
     try:
         output = subprocess.check_output(cmd).decode().strip()
         if not output:
@@ -312,7 +356,9 @@ def get_containers(show_all=False):
                     'name': container_data.get('Names'),
                     'image': container_data.get('Image'),
                     'status': container_data.get('Status'),
-                    'state': container_data.get('State'), # e.g., 'running', 'exited'
+                    'state': container_data.get('State'), # e.g., 'running', 'exited',
+                    'ports_raw': container_data.get('Ports', ''), # Get the raw port string
+                    'ports_parsed': parse_ports(container_data.get('Ports', '')) # Add parsed ports
                 })
             except json.JSONDecodeError:
                 print(f"Warning: Could not parse JSON line: {line}") # Log parsing errors
