@@ -300,12 +300,14 @@ def get_containers(show_all=False, request_hostname=None):
     containers = []
 
     # Note: request_hostname should only be passed when called from a request context
-    def parse_ports(ports_str, request_hostname=None): 
-        """Parses the port string from docker ps into structured data."""
+    def parse_ports(ports_str, request_hostname=None):
+        """Parses the port string from docker ps into structured data, avoiding duplicate links."""
         parsed = []
+        linked_host_ports = set() # Track host ports already linked via wildcard
+
         if not ports_str:
             return parsed
-        
+
         # Example: "0.0.0.0:8080->80/tcp, :::8080->80/tcp, 6379/tcp"
         parts = ports_str.split(',')
         for part in parts:
@@ -332,10 +334,15 @@ def get_containers(show_all=False, request_hostname=None):
                     if port_info['host_ip'] in ['0.0.0.0', '::']:
                         # Use request hostname if available, otherwise default to localhost
                         host_link_ip = request_hostname if request_hostname else 'localhost'
-                        
-                        # Create link only if host port is valid
+
+                        # Create link only if host port is valid AND not already linked via wildcard
                         if port_info['host_port'].isdigit():
-                            port_info['link'] = f"http://{host_link_ip}:{port_info['host_port']}"
+                            host_port_num = port_info['host_port']
+                            # Check if this host port has already been linked via 0.0.0.0 or ::
+                            if host_port_num not in linked_host_ports:
+                                port_info['link'] = f"http://{host_link_ip}:{host_port_num}"
+                                linked_host_ports.add(host_port_num) # Mark this host port as linked
+                            # else: Link already created for this host port via the other wildcard IP
                         else:
                             print(f"Warning: Non-numeric host port detected for reachable binding: {port_info['host_port']} in {host_part}")
                     # else: Port is bound to a specific IP (e.g., 127.0.0.1), so don't create a link
