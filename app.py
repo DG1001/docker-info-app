@@ -17,7 +17,7 @@ os.environ["PATH"] = "/run/current-system/sw/bin:" + os.environ.get("PATH", "")
 tasks = {}
 
 # Configuration
-OLLAMA_API_URL = "http://localhost:11434"
+OLLAMA_API_URL = "http://ci.infra:11434"
 
 def run_docker_info(task_id, use_ollama):
     """Run the Docker info collection and report generation in the background"""
