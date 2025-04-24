@@ -66,12 +66,141 @@ def run_docker_info(task_id, use_openai):
 
         # Update task status
         tasks[task_id]['status'] = 'generating'
-        tasks[task_id]['message'] = 'Generating markdown report...'
+        tasks[task_id]['message'] = 'Generating basic markdown report...' # Start with basic report message
 
-        # Generate markdown report
+        # --- Basic Report Generation (Always Run First) ---
+        compose_projects = {}
+        container_details_for_report = []
+
+        # Process collected container info for the basic report
+        for container_info in all_container_info:
+            container_id = container_info.get('Id', 'N/A')[:12] # Short ID
+            name = container_info.get('Name', 'N/A').lstrip('/')
+            image = container_info.get('Config', {}).get('Image', 'N/A')
+            created = container_info.get('Created', 'N/A')
+            status = container_info.get('State', {}).get('Status', 'N/A')
+
+            # Extract ports
+            ports_dict = container_info.get('NetworkSettings', {}).get('Ports', {})
+            ports_list = []
+            for container_port, host_bindings in ports_dict.items():
+                if host_bindings:
+                    for binding in host_bindings:
+                        ports_list.append(f"{container_port} -> {binding.get('HostIp', '0.0.0.0')}:{binding.get('HostPort', 'N/A')}")
+                else:
+                     ports_list.append(f"{container_port} (no host binding)")
+            ports = ", ".join(ports_list) if ports_list else "None"
+
+            # Extract networks
+            networks_dict = container_info.get('NetworkSettings', {}).get('Networks', {})
+            networks = ", ".join(networks_dict.keys()) if networks_dict else "None"
+
+            # Extract mounts
+            mounts_list = []
+            for mount in container_info.get('Mounts', []):
+                mount_str = f"{mount.get('Source', 'N/A')} -> {mount.get('Destination', 'N/A')} ({mount.get('Type', 'N/A')}"
+                if not mount.get('RW', True):
+                    mount_str += ", ro"
+                mount_str += ")"
+                mounts_list.append(mount_str)
+            mounts_str = "\n".join(mounts_list) if mounts_list else "No volumes mounted."
+
+            # Extract environment variables (excluding potentially sensitive ones is safer for basic report)
+            env_vars = container_info.get('Config', {}).get('Env', [])
+            env_vars_str = "\n".join(env_vars) if env_vars else "No environment variables set."
+            # Consider filtering sensitive vars here if needed
+
+            # Extract resource limits
+            host_config = container_info.get('HostConfig', {})
+            cpu_shares = host_config.get('CpuShares', 'N/A')
+            memory_limit = host_config.get('Memory', 0) # In bytes
+            memory_limit_str = f"{memory_limit / (1024*1024):.2f} MiB" if memory_limit else "N/A"
+
+            # Store details for report generation
+            container_details_for_report.append({
+                'id': container_id,
+                'name': name,
+                'image': image,
+                'created': created,
+                'status': status,
+                'ports': ports,
+                'networks': networks,
+                'mounts': mounts_str,
+                'env_vars': env_vars_str,
+                'cpu_shares': cpu_shares,
+                'memory_limit': memory_limit_str
+            })
+
+            # Check for Docker Compose label
+            labels = container_info.get('Config', {}).get('Labels', {})
+            project_name = labels.get('com.docker.compose.project')
+            if project_name:
+                if project_name not in compose_projects:
+                    compose_projects[project_name] = []
+                compose_projects[project_name].append(f"{name} ({container_id})")
+
+
+        # Write the basic markdown report (always, using 'w' mode)
+        try:
+            with open(markdown_file, 'w') as f:
+                f.write(f"# Docker Containers Report (Basic)\n")
+                f.write(f"**Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}**\n\n")
+
+                f.write("## Summary\n")
+                f.write(f"Total running containers: {len(all_container_info)}\n\n")
+
+                # Add Docker Compose Projects section if any were found
+                if compose_projects:
+                    f.write("## Docker Compose Projects\n\n")
+                    for project, project_containers in compose_projects.items():
+                        f.write(f"### Project: {project}\n")
+                        for container_name_id in project_containers:
+                            f.write(f"- {container_name_id}\n")
+                        f.write("\n")
+
+                f.write("## Container Details\n\n")
+
+                for details in container_details_for_report:
+                    f.write(f"### Container: {details['name']} ({details['id']})\n")
+                    f.write(f"- **Image**: {details['image']}\n")
+                    f.write(f"- **Created**: {details['created']}\n")
+                    f.write(f"- **Status**: {details['status']}\n")
+                    f.write(f"- **Ports**: {details['ports']}\n")
+                    f.write(f"- **Networks**: {details['networks']}\n\n")
+
+                    f.write("#### Volumes\n")
+                    f.write("```\n")
+                    f.write(details['mounts'])
+                    f.write("\n```\n\n")
+
+                    f.write("#### Environment Variables\n")
+                    f.write("```\n")
+                    f.write(details['env_vars'])
+                    f.write("\n```\n\n")
+
+                    f.write("#### Resource Limits\n")
+                    f.write(f"- CPU Shares: {details['cpu_shares']}\n")
+                    f.write(f"- Memory Limit: {details['memory_limit']}\n\n")
+
+            # Basic report generated, update status before potentially trying AI
+            tasks[task_id]['status'] = 'completed' # Tentative status
+            tasks[task_id]['message'] = 'Basic report generated successfully.'
+            tasks[task_id]['file_path'] = markdown_file
+
+        except IOError as write_error:
+             tasks[task_id]['status'] = 'error'
+             tasks[task_id]['message'] = f"Error writing basic report to file: {str(write_error)}"
+             return # Stop if basic report writing fails
+
+        # --- AI Enhanced Report Generation (Optional) ---
         if use_openai:
+            tasks[task_id]['status'] = 'generating_ai' # More specific status
+            tasks[task_id]['message'] = 'Basic report generated. Now generating AI enhanced report...'
+
             if not OPENAI_API_KEY:
-                tasks[task_id]['message'] = 'OpenAI API key not configured. Falling back to basic report.'
+                tasks[task_id]['status'] = 'completed' # Revert to completed as AI cannot run
+                tasks[task_id]['message'] = 'Basic report generated. OpenAI API key not configured, skipping AI enhancement.'
+                return # Return here as AI part is skipped
             else:
                 try:
                     # Initialize OpenAI client
@@ -115,92 +244,46 @@ JSON data:
                         timeout=180
                     )
 
-                    # Extract response and write to file
+                    # Extract response and append to file
                     if completion.choices and completion.choices[0].message:
                         report_content = completion.choices[0].message.content
-                        with open(markdown_file, 'w') as f:
-                            f.write(report_content)
-                        tasks[task_id]['status'] = 'completed'
-                        tasks[task_id]['message'] = f'Report generated successfully using OpenAI ({OPENAI_MODEL}).'
-                        tasks[task_id]['file_path'] = markdown_file
-                        return
+                        try:
+                            with open(markdown_file, 'a') as f: # Open in append mode
+                                f.write("\n\n---\n\n# AI Enhanced Report\n\n") # Add separator
+                                f.write(report_content)
+                            tasks[task_id]['status'] = 'completed'
+                            tasks[task_id]['message'] = f'Basic report and AI enhanced report ({OPENAI_MODEL}) generated successfully.'
+                            # file_path is already set
+                            return # Task fully completed
+                        except IOError as append_error:
+                            tasks[task_id]['status'] = 'error' # Error during append
+                            tasks[task_id]['message'] = f'Basic report generated, but failed to append AI report: {str(append_error)}'
+                            return
                     else:
-                        tasks[task_id]['message'] = 'OpenAI API returned an empty response. Falling back to basic report.'
+                        # AI returned empty response, but basic report is done
+                        tasks[task_id]['status'] = 'completed'
+                        tasks[task_id]['message'] = 'Basic report generated. OpenAI API returned an empty response for enhancement.'
+                        return
 
                 except openai.APIError as e:
-                    tasks[task_id]['message'] = f"OpenAI API Error: {e}. Falling back to basic report."
+                    error_msg = f"OpenAI API Error: {e}"
                 except openai.AuthenticationError:
-                     tasks[task_id]['message'] = f"OpenAI Authentication Error (check API key). Falling back to basic report."
+                     error_msg = f"OpenAI Authentication Error (check API key)"
                 except openai.RateLimitError:
-                     tasks[task_id]['message'] = f"OpenAI Rate Limit Exceeded. Falling back to basic report."
+                     error_msg = f"OpenAI Rate Limit Exceeded"
                 except Exception as e: # Catch other potential errors (network, etc.)
-                    tasks[task_id]['message'] = f'Error during OpenAI report generation: {str(e)}. Falling back to basic report.'
+                    error_msg = f'Error during OpenAI report generation: {str(e)}'
 
-        # If we got here, either OpenAI was not requested or it failed
-        # Generate basic markdown report
-        tasks[task_id]['message'] = tasks[task_id].get('message', '') + ' Generating basic report...' # Append to existing message if fallback occurred
-        with open(markdown_file, 'w') as f:
-            f.write(f"# Docker Containers Report\n")
-            f.write(f"**Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}**\n\n")
-            
-            f.write("## Summary\n")
-            f.write(f"Total running containers: {len([c for c in containers if c])}\n\n")
-            
-            f.write("## Container Details\n\n")
-            
-            for container_id in containers:
-                if container_id:  # Skip empty lines
-                    # Get container info
-                    name = subprocess.check_output(["docker", "inspect", "--format", "{{.Name}}", container_id]).decode().strip().replace('/', '')
-                    image = subprocess.check_output(["docker", "inspect", "--format", "{{.Config.Image}}", container_id]).decode().strip()
-                    created = subprocess.check_output(["docker", "inspect", "--format", "{{.Created}}", container_id]).decode().strip()
-                    status = subprocess.check_output(["docker", "inspect", "--format", "{{.State.Status}}", container_id]).decode().strip()
-                    ports = subprocess.check_output(["docker", "inspect", "--format", "{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} -> {{range $conf}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}", container_id]).decode().strip()
-                    networks = subprocess.check_output(["docker", "inspect", "--format", "{{range $net, $conf := .NetworkSettings.Networks}}{{$net}} {{end}}", container_id]).decode().strip()
-                    
-                    f.write(f"### Container: {name} ({container_id})\n")
-                    f.write(f"- **Image**: {image}\n")
-                    f.write(f"- **Created**: {created}\n")
-                    f.write(f"- **Status**: {status}\n")
-                    f.write(f"- **Ports**: {ports}\n")
-                    f.write(f"- **Networks**: {networks}\n\n")
-                    
-                    # Get mounted volumes
-                    f.write("#### Volumes\n")
-                    mounts = subprocess.check_output(["docker", "inspect", "--format", "{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.Type}}){{println}}{{end}}", container_id]).decode().strip()
-                    
-                    if not mounts:
-                        f.write("No volumes mounted.\n\n")
-                    else:
-                        f.write("```\n")
-                        f.write(mounts)
-                        f.write("\n```\n\n")
-                    
-                    # Get environment variables
-                    f.write("#### Environment Variables\n")
-                    env_vars = subprocess.check_output(["docker", "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", container_id]).decode().strip()
-                    
-                    if not env_vars:
-                        f.write("No environment variables set.\n\n")
-                    else:
-                        f.write("```\n")
-                        f.write(env_vars)
-                        f.write("\n```\n\n")
-                    
-                    # Get resource limits
-                    f.write("#### Resource Limits\n")
-                    cpu_shares = subprocess.check_output(["docker", "inspect", "--format", "{{.HostConfig.CpuShares}}", container_id]).decode().strip()
-                    memory = subprocess.check_output(["docker", "inspect", "--format", "{{.HostConfig.Memory}}", container_id]).decode().strip()
-                    
-                    f.write(f"- CPU Shares: {cpu_shares}\n")
-                    f.write(f"- Memory Limit: {memory} bytes\n\n")
-        
-        # Update task status
-        tasks[task_id]['status'] = 'completed'
-        tasks[task_id]['message'] = 'Report generated successfully.'
-        tasks[task_id]['file_path'] = markdown_file
-        
+                # If any OpenAI exception occurred, update status but basic report is still available
+                tasks[task_id]['status'] = 'completed' # Mark as completed as basic report exists
+                tasks[task_id]['message'] = f'Basic report generated. AI enhancement failed: {error_msg}.'
+                return # Return as AI part failed
+
+        # If use_openai was false, the function implicitly returns here
+        # as the basic report generation already set status to 'completed'.
+
     except Exception as e:
+        # Catch-all for errors before or during basic report generation
         tasks[task_id]['status'] = 'error'
         tasks[task_id]['message'] = f"Error: {str(e)}"
 

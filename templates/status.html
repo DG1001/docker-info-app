@@ -53,8 +53,11 @@
                 case 'collecting':
                     progressBar.style.width = '30%';
                     break;
-                case 'generating':
-                    progressBar.style.width = '70%';
+                case 'generating': // Basic report generation
+                    progressBar.style.width = '60%';
+                    break;
+                case 'generating_ai': // AI report generation
+                    progressBar.style.width = '85%';
                     break;
                 case 'completed':
                     progressBar.style.width = '100%';
