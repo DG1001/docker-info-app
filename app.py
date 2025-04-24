@@ -6,6 +6,7 @@ import tempfile
 import time
 import threading
 import requests
+import openai # Import OpenAI library
 from datetime import datetime
 
 app = Flask(__name__)
@@ -17,9 +18,10 @@ os.environ["PATH"] = "/run/current-system/sw/bin:" + os.environ.get("PATH", "")
 tasks = {}
 
 # Configuration
-OLLAMA_API_URL = "http://ci.infra:11434"
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") # Get API key from environment
+OPENAI_MODEL = "gpt-4.1-nano" # Specify the desired OpenAI model
 
-def run_docker_info(task_id, use_ollama):
+def run_docker_info(task_id, use_openai):
     """Run the Docker info collection and report generation in the background"""
     try:
         # Create temp directory for this task
@@ -65,74 +67,74 @@ def run_docker_info(task_id, use_ollama):
         # Update task status
         tasks[task_id]['status'] = 'generating'
         tasks[task_id]['message'] = 'Generating markdown report...'
-        
-        # Generate markdown report
-        if use_ollama:
-            # Check if Ollama API is accessible
-            try:
-                model = "gemma3:latest"
-                model_check = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5).json()
 
-                # Check if the model exists
-                model_found = False
-                available_models = []
-                
-                if 'models' in model_check:
-                    available_models = [m['name'] for m in model_check['models']]
-                    if model in available_models:
-                        model_found = True
-                    # If specific model not found, check for any deepseek model
-                    elif any("deepseek" in m for m in available_models):
-                        model = next(m for m in available_models if "deepseek" in m)
-                        model_found = True
-                
-                if model_found:
+        # Generate markdown report
+        if use_openai:
+            if not OPENAI_API_KEY:
+                tasks[task_id]['message'] = 'OpenAI API key not configured. Falling back to basic report.'
+            else:
+                try:
+                    # Initialize OpenAI client
+                    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
                     # Create prompt
                     with open(json_file, 'r') as f:
                         json_data = f.read()
-                    
-                    prompt = f"""Create a comprehensive markdown report about Docker containers from the following JSON data. 
-Include sections for:
-1. Executive Summary (count of containers, images used, etc.)
-2. Detailed Container Information (organized by container)
-3. Network Configuration
-4. Volume Mounts
-5. Resource Usage and Limits
-6. Environment Variables
-7. Health Checks
-8. Security Profile
 
-Format the markdown to be well-structured with proper headings, tables, and code blocks where appropriate.
+                    system_prompt = "You are an expert assistant specialized in analyzing Docker container configurations and generating clear, concise markdown reports."
+                    user_prompt = f"""Create a comprehensive markdown report about Docker containers from the following JSON data.
+Include sections for:
+1. Executive Summary (count of containers, unique images used, common networks, etc.)
+2. Detailed Container Information (organized per container: Name, ID, Image, Status, Ports, Networks, Mounts)
+3. Network Configuration Summary (List networks and connected containers)
+4. Volume Mounts Summary (List volumes/bind mounts and containers using them)
+5. Resource Usage and Limits (If available in data)
+6. Environment Variables (Mention sensitive variables should be handled carefully, list non-sensitive ones if appropriate, or just summarize their presence)
+7. Health Checks (If configured)
+8. Security Considerations (Based on exposed ports, capabilities, user, etc. - provide general advice)
+
+Format the markdown to be well-structured with proper headings, tables (for structured data like ports/mounts), and code blocks where appropriate. Focus on clarity and readability.
 
 JSON data:
-{json_data}"""
-                    
-                    # Make request to Ollama API
-                    response = requests.post(
-                        f"{OLLAMA_API_URL}/api/generate",
-                        json={"model": model, "prompt": prompt, "stream": False},
-                        timeout=180  # Longer timeout for large model responses
+```json
+{json_data}
+```"""
+
+                    # Make request to OpenAI API
+                    completion = client.chat.completions.create(
+                        model=OPENAI_MODEL,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.5, # Adjust creativity/factuality
+                        timeout=180
                     )
 
-                    # Write response to markdown file
-                    if response.status_code == 200:
+                    # Extract response and write to file
+                    if completion.choices and completion.choices[0].message:
+                        report_content = completion.choices[0].message.content
                         with open(markdown_file, 'w') as f:
-                            f.write(response.json().get('response', ''))
+                            f.write(report_content)
                         tasks[task_id]['status'] = 'completed'
-                        tasks[task_id]['message'] = 'Report generated successfully using Ollama.'
+                        tasks[task_id]['message'] = f'Report generated successfully using OpenAI ({OPENAI_MODEL}).'
                         tasks[task_id]['file_path'] = markdown_file
                         return
                     else:
-                        # If API call fails, fall back to basic report
-                        tasks[task_id]['message'] = f'Ollama API call failed with status {response.status_code}. Falling back to basic report.'
-                else:
-                    tasks[task_id]['message'] = f'Ollama model not found. Available models: {", ".join(available_models)}. Falling back to basic report.'
-            
-            except (requests.RequestException, json.JSONDecodeError) as e:
-                tasks[task_id]['message'] = f'Error accessing Ollama API: {str(e)}. Falling back to basic report.'
-        
-        # If we got here, either Ollama was not requested or it failed
+                        tasks[task_id]['message'] = 'OpenAI API returned an empty response. Falling back to basic report.'
+
+                except openai.APIError as e:
+                    tasks[task_id]['message'] = f"OpenAI API Error: {e}. Falling back to basic report."
+                except openai.AuthenticationError:
+                     tasks[task_id]['message'] = f"OpenAI Authentication Error (check API key). Falling back to basic report."
+                except openai.RateLimitError:
+                     tasks[task_id]['message'] = f"OpenAI Rate Limit Exceeded. Falling back to basic report."
+                except Exception as e: # Catch other potential errors (network, etc.)
+                    tasks[task_id]['message'] = f'Error during OpenAI report generation: {str(e)}. Falling back to basic report.'
+
+        # If we got here, either OpenAI was not requested or it failed
         # Generate basic markdown report
+        tasks[task_id]['message'] = tasks[task_id].get('message', '') + ' Generating basic report...' # Append to existing message if fallback occurred
         with open(markdown_file, 'w') as f:
             f.write(f"# Docker Containers Report\n")
             f.write(f"**Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}**\n\n")
@@ -208,36 +210,31 @@ def index():
         docker_available = True
     except (subprocess.SubprocessError, FileNotFoundError):
         docker_available = False
-    
-    # Check if Ollama API is available
-    try:
-        requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=2)
-        ollama_available = True
-    except requests.RequestException:
-        ollama_available = False
-    
+
+    # Check if OpenAI API key is configured
+    openai_available = bool(OPENAI_API_KEY)
+
     return render_template('index.html',
                           docker_available=docker_available,
-                          ollama_available=ollama_available,
-                          ollama_url=OLLAMA_API_URL) # Pass URL to template
+                          openai_available=openai_available) # Pass OpenAI availability
 
 
 @app.route('/generate', methods=['POST'])
 def generate_report():
     """Start the report generation process"""
-    use_ollama = request.form.get('use_ollama') == 'true'
-    
+    use_openai = request.form.get('use_openai') == 'true' # Check for use_openai
+
     # Create a task ID and initialize task
     task_id = str(int(time.time()))
     tasks[task_id] = {
         'status': 'starting',
         'message': 'Initializing task...',
-        'use_ollama': use_ollama,
+        'use_openai': use_openai, # Store use_openai flag
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
-    
+
     # Start background task
-    thread = threading.Thread(target=run_docker_info, args=(task_id, use_ollama))
+    thread = threading.Thread(target=run_docker_info, args=(task_id, use_openai)) # Pass use_openai
     thread.daemon = True
     thread.start()
     

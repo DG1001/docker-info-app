@@ -6,7 +6,7 @@ A web application built with Flask that collects information about running Docke
 
 -   Collects detailed information about all running Docker containers using `docker inspect`.
 -   Generates a markdown report summarizing container details (name, image, status, ports, networks, volumes, environment variables, resource limits).
--   Optionally uses Ollama (if available on `http://localhost:11434`) to generate a more detailed and structured report using an LLM (defaults to `gemma3:latest` or any available `deepseek` model).
+-   Optionally uses OpenAI's `gpt-4.1-nano` model (if API key is provided) to generate a more detailed and structured report.
 -   Provides a web interface to trigger report generation, view status, download, and view the report.
 -   Includes API endpoints for status checking.
 
@@ -15,7 +15,7 @@ A web application built with Flask that collects information about running Docke
 1.  **Prerequisites:**
     *   Python 3.x
     *   Docker installed and running.
-    *   (Optional) Ollama running on `http://localhost:11434` for enhanced reports.
+    *   (Optional) OpenAI API Key for enhanced reports.
 
 2.  **Clone the repository:**
     ```bash
@@ -27,6 +27,12 @@ A web application built with Flask that collects information about running Docke
     ```bash
     pip install -r requirements.txt
     ```
+4.  **(Optional) Set OpenAI API Key:**
+    For enhanced report generation using OpenAI, set the `OPENAI_API_KEY` environment variable:
+    ```bash
+    export OPENAI_API_KEY='your-api-key-here' 
+    ```
+    *Note: On Windows, use `set OPENAI_API_KEY=your-api-key-here` or set it via system properties.*
 
 ## Usage
 
@@ -41,7 +47,7 @@ A web application built with Flask that collects information about running Docke
 
 3.  **Generate a report:**
     *   Click the "Generate Report" button.
-    *   Optionally, check the "Use Ollama LLM" box if Ollama is available and you want an enhanced report.
+    *   Optionally, check the "Use OpenAI GPT" box if you have set your API key and want an enhanced report.
     *   You will be redirected to a status page.
 
 4.  **View/Download the report:**
