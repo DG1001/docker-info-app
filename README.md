@@ -2,6 +2,8 @@
 
 A web application built with Flask that collects information about running Docker containers, generates comprehensive markdown reports, and provides basic container management capabilities.
 
+![App Screenshot](screen.png)
+
 ## Features
 
 -   **Container Status:** Displays a live table of running or all Docker containers on the main page.
